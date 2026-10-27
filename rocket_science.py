@@ -41,7 +41,7 @@ TIERS = {
     "LIFTOFF": {"units": 1.0, "label": "🚀 Liftoff", "desc": "Tier 1 play"},
     "ORBIT": {"units": 0.5, "label": "🛰️ Orbit", "desc": "Tier 2 lean, small stake"},
     "WATCH": {"units": 0.0, "label": "🔭 Watch", "desc": "Public side flagged, no historical edge"},
-    "ABORT": {"units": 0.0, "label": "⛔ Abort", "desc": "Public money agrees, fading has lost"},
+    "ABORT": {"units": 0.0, "label": "💥 Crash", "desc": "Public money agrees, fading has lost"},
     "GROUNDED": {"units": 0.0, "label": "🌍 Grounded", "desc": "No side has 70% of bets or money"},
 }
 

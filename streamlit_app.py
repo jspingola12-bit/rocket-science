@@ -303,7 +303,7 @@ with tab_board:
             games_tbl = games_tbl[games_tbl["_play"]]
         st.dataframe(games_tbl.drop(columns=["_play"]), hide_index=True, width="stretch", height=600)
         st.caption("🚀 Liftoff = bet 1u · 🛰️ Orbit = lean 0.5u · 🔭 Watch = 70% side but no edge · "
-                   "⛔ Abort = public money agrees, don't fade · 🌍 Grounded = no side at 70%. "
+                   "💥 Crash = public money agrees, don't fade · 🌍 Grounded = no side at 70%. "
                    "Splits move until game time, so check close to kickoff or tip.")
 
 with tab_bets:
@@ -451,7 +451,7 @@ Rocket Science then grades the fade by comparing the public's **money %** to its
 | 🛰️ Orbit | NFL moneyline · same rule | 0.5u | 364 bets, **+3.8% ROI** |
 | 🛰️ Orbit | NBA spread · public ≥70% of bets · money 1–9 pts lower than bets | 0.5u | 471 bets, 249-215, **+2.6% ROI** |
 | 🔭 Watch | Other ≥70% bets with lighter money (e.g. NBA ML) | 0 | Negative or break-even |
-| ⛔ Abort | Public money ≥ public bets, or ≥70% money on <70% bets | 0 | **−5% to −27% ROI**. Big money is *with* the public |
+| 💥 Crash | Public money ≥ public bets, or ≥70% money on <70% bets | 0 | **−5% to −27% ROI**. Big money is *with* the public |
 | 🌍 Grounded | No side has 70% of bets or money | 0 | Not a fade spot. Shown so every game is on the board |
 
 Blind-fading every 70% side: NFL spread +2.2%, NBA spread −5.8%, NFL ML −7.8%, NBA ML negative.
