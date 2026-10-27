@@ -13,8 +13,8 @@ st.title("🚀 Rocket Science")
 st.caption("Fade the public on NFL & NBA spreads and moneylines when 70%+ of bets or money "
            "is on one side, graded by whether the money backs the tickets up.")
 
-COLS = ["tier_label", "league", "local_time", "matchup", "market", "fade_pick", "odds",
-        "public_side", "public_bets_%", "public_money_%", "money_minus_bets", "units", "status", "result"]
+COLS = ["tier_label", "league", "local_time", "matchup", "market", "line", "fade_pick", "odds",
+        "public_side", "public_bets_%", "public_money_%", "money_minus_bets", "status", "score", "result"]
 
 
 def localize(df):
@@ -47,11 +47,13 @@ def load_history(start: dt.date, end: dt.date, leagues: tuple):
 tab_board, tab_track, tab_rules = st.tabs(["Today's board", "Track record / backtest", "How it works"])
 
 with tab_board:
-    c1, c2, c3, c4 = st.columns([1.2, 1, 1, 1.4])
-    day = c1.date_input("NBA date", dt.datetime.now(CT).date())
-    nfl_on = c2.toggle("NFL (current week)", True)
+    c1, c2, c3 = st.columns([1.2, 1, 1])
+    day = c1.date_input("Date", dt.datetime.now(CT).date())
+    nfl_on = c2.toggle("NFL", True)
     nba_on = c3.toggle("NBA", True)
-    show_all = c4.toggle("Show Watch / Abort sides", False)
+    c4, c5 = st.columns([1.2, 2])
+    nfl_scope = c4.radio("NFL games", ["Whole week", "This date only"], horizontal=True)
+    plays_only = c5.toggle("Plays only (Liftoff / Orbit)", False)
     if st.button("🔄 Refresh splits"):
         load_board.clear()
     try:
@@ -60,24 +62,29 @@ with tab_board:
         st.error(f"Couldn't reach Action Network: {e}")
         df = pd.DataFrame()
 
+    if not df.empty and nfl_scope == "This date only":
+        local_day = pd.to_datetime(df["start"], utc=True).dt.tz_convert(CT).dt.date
+        df = df[(df.league != "NFL") | (local_day == day)]
+
     if df.empty:
-        st.info("No 70% public sides on the board yet. Splits fill in as bets come in; check closer to tip/kickoff.")
+        st.info("No games on the board for this date.")
     else:
-        plays = df[df.tier.isin(["LIFTOFF", "ORBIT"])]
-        upcoming = plays[plays.status != "complete"]
+        live = df[df.status != "complete"]
         m1, m2, m3 = st.columns(3)
-        m1.metric("Liftoff plays", int((upcoming.tier == "LIFTOFF").sum()))
-        m2.metric("Orbit leans", int((upcoming.tier == "ORBIT").sum()))
-        m3.metric("Public sides flagged", len(df))
-        view = df if show_all else plays
-        st.dataframe(view[[c for c in COLS if c in view]], hide_index=True, width="stretch",
-                     column_config={"tier_label": "Tier", "fade_pick": "Fade pick",
-                                    "public_bets_%": st.column_config.NumberColumn("Public bets %", format="%d%%"),
-                                    "public_money_%": st.column_config.NumberColumn("Public money %", format="%d%%"),
+        m1.metric("Liftoff plays", int((live.tier == "LIFTOFF").sum()))
+        m2.metric("Orbit leans", int((live.tier == "ORBIT").sum()))
+        m3.metric("Games", int(df.game_id.nunique()))
+        view = df[df.tier.isin(["LIFTOFF", "ORBIT"])] if plays_only else df
+        st.dataframe(view[[c for c in COLS if c in view]], hide_index=True, width="stretch", height=600,
+                     column_config={"tier_label": "Tier", "fade_pick": "Fade pick", "line": "Line",
+                                    "public_side": "Most-bet side", "local_time": "Time (CT)",
+                                    "public_bets_%": st.column_config.NumberColumn("Bets %", format="%d%%"),
+                                    "public_money_%": st.column_config.NumberColumn("Money %", format="%d%%"),
                                     "money_minus_bets": st.column_config.NumberColumn("Money − bets", format="%+d"),
                                     "odds": st.column_config.NumberColumn("Odds", format="%+d")})
-        st.caption("Splits move until game time. The backtest used closing numbers, "
-                   "so the closer to kickoff/tip you check, the more the board matches what was tested.")
+        st.caption("🚀 Liftoff = bet 1u · 🛰️ Orbit = lean 0.5u · 🔭 Watch = 70% side but no edge · "
+                   "⛔ Abort = public money agrees, don't fade · 🌍 Grounded = no side at 70%. "
+                   "Splits move until game time, so check close to kickoff or tip.")
 
 with tab_track:
     st.write("Rebuilds every graded fade straight from Action Network's history "
@@ -119,6 +126,7 @@ Rocket Science then grades the fade by comparing the public's **money %** to its
 | 🛰️ Orbit | NBA spread · public ≥70% of bets · money 1–9 pts lower than bets | 0.5u | 471 bets, 249-215, **+2.6% ROI** |
 | 🔭 Watch | Other ≥70% bets with lighter money (e.g. NBA ML) | 0 | Negative or break-even |
 | ⛔ Abort | Public money ≥ public bets, or ≥70% money on <70% bets | 0 | **−5% to −27% ROI**. Big money is *with* the public |
+| 🌍 Grounded | No side has 70% of bets or money | 0 | Not a fade spot. Shown so every game is on the board |
 
 Blind-fading every 70% side: NFL spread +2.2%, NBA spread −5.8%, NFL ML −7.8%, NBA ML negative.
 

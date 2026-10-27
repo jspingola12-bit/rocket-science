@@ -42,6 +42,7 @@ TIERS = {
     "ORBIT": {"units": 0.5, "label": "🛰️ Orbit", "desc": "Tier 2 lean, small stake"},
     "WATCH": {"units": 0.0, "label": "🔭 Watch", "desc": "Public side flagged, no historical edge"},
     "ABORT": {"units": 0.0, "label": "⛔ Abort", "desc": "Public money agrees, fading has lost"},
+    "GROUNDED": {"units": 0.0, "label": "🌍 Grounded", "desc": "No side has 70% of bets or money"},
 }
 
 
@@ -205,10 +206,54 @@ def grade_row(game: Game, mkt: str, fade: str, line, odds) -> dict:
     return {"result": "P", "profit_1u": 0.0}
 
 
+def _fmt(v):
+    return "—" if v is None else f"{v:+g}"
+
+
+def game_rows(game: Game) -> list[dict]:
+    """Every market for a game: the fade signal if there is one, otherwise a GROUNDED row."""
+    sig = {r["market"]: r for r in signals(game)}
+    lines = {
+        "Spread": (f"{game.away} {_fmt(game.away_spread)} / {game.home} "
+                   f"{_fmt(None if game.away_spread is None else -game.away_spread)}"),
+        "Moneyline": f"{game.away} {_fmt(game.away_ml)} / {game.home} {_fmt(game.home_ml)}",
+    }
+    splits = {"Spread": (game.spread_away_tickets, game.spread_away_money),
+              "Moneyline": (game.ml_away_tickets, game.ml_away_money)}
+    rows = []
+    for mkt in ("Spread", "Moneyline"):
+        if mkt in sig:
+            row = sig[mkt]
+        else:
+            at, am = splits[mkt]
+            has = at is not None and am is not None and not (at == 0 and am == 0)
+            if has:
+                away_more = at >= 50
+                pub_team = game.away if away_more else game.home
+                pt, pm = (at, am) if away_more else (100 - at, 100 - am)
+            else:
+                pub_team, pt, pm = None, None, None
+            row = {
+                "league": game.league.upper(), "start": game.start, "matchup": f"{game.away} @ {game.home}",
+                "market": mkt, "public_side": pub_team, "public_bets_%": pt, "public_money_%": pm,
+                "money_minus_bets": None if pt is None else pm - pt,
+                "fade_pick": "No 70% side" if has else "No splits yet", "fade_line": None, "odds": None,
+                "tier": "GROUNDED", "tier_label": TIERS["GROUNDED"]["label"], "units": 0.0,
+                "status": game.status, "game_id": game.game_id, "season": game.season, "week": game.week,
+                "result": None, "profit_1u": None,
+            }
+        row["line"] = lines[mkt]
+        row["score"] = (f"{game.away} {game.away_score:g} – {game.home} {game.home_score:g}"
+                        if game.away_score is not None and game.home_score is not None
+                        and game.status != "scheduled" else "")
+        rows.append(row)
+    return rows
+
+
 def board(games: list[Game]) -> list[dict]:
-    rows = [r for g in games for r in signals(g)]
-    order = {"LIFTOFF": 0, "ORBIT": 1, "WATCH": 2, "ABORT": 3}
-    return sorted(rows, key=lambda r: (order[r["tier"]], r["start"] or ""))
+    """Every game and market on the slate, in start-time order."""
+    rows = [r for g in games for r in game_rows(g)]
+    return sorted(rows, key=lambda r: (r["start"] or "", r["matchup"], r["market"] != "Spread"))
 
 
 # ---------------------------------------------------------------- history / backtest
