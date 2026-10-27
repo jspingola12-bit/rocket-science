@@ -184,6 +184,7 @@ def signals(game: Game) -> list[dict]:
             "money_minus_bets": pm - pt, "fade_pick": pick, "fade_line": line, "odds": odds,
             "tier": tier, "tier_label": TIERS[tier]["label"], "units": TIERS[tier]["units"],
             "status": game.status, "game_id": game.game_id, "season": game.season, "week": game.week,
+            "pick_side": fade, "pick_team": fade_team,
         }
         row.update(grade_row(game, mkt, fade, line, odds))
         rows.append(row)
@@ -243,6 +244,9 @@ def game_rows(game: Game) -> list[dict]:
                 "result": None, "profit_1u": None,
             }
         row["line"] = lines[mkt]
+        row.update(away=game.away, home=game.home, away_spread=game.away_spread,
+                   away_spread_odds=game.away_spread_odds, home_spread_odds=game.home_spread_odds,
+                   away_ml=game.away_ml, home_ml=game.home_ml)
         row["score"] = (f"{game.away} {game.away_score:g} – {game.home} {game.home_score:g}"
                         if game.away_score is not None and game.home_score is not None
                         and game.status != "scheduled" else "")
@@ -254,6 +258,58 @@ def board(games: list[Game]) -> list[dict]:
     """Every game and market on the slate, in start-time order."""
     rows = [r for g in games for r in game_rows(g)]
     return sorted(rows, key=lambda r: (r["start"] or "", r["matchup"], r["market"] != "Spread"))
+
+
+# ---------------------------------------------------------------- personal bet tracker
+def pick_label(team: str, market: str, line) -> str:
+    """'NYJ -1.5' or 'ATL ML'. market is 'spread' or 'ml'."""
+    return f"{team} {line:+g}" if market == "spread" else f"{team} ML"
+
+
+def _nn(v):
+    """None for missing values (None or NaN)."""
+    return None if v is None or v != v else v
+
+
+def side_quote(row: dict, market: str, side: str):
+    """(team, line, odds) for one side of a board row's game."""
+    team = row["away"] if side == "away" else row["home"]
+    if market == "spread":
+        spread = _nn(row.get("away_spread"))
+        if spread is None:
+            return team, None, None
+        line = float(spread) if side == "away" else -float(spread)
+        odds = _nn(row.get("away_spread_odds") if side == "away" else row.get("home_spread_odds"))
+        return team, line, -110.0 if odds is None else float(odds)
+    odds = _nn(row.get("away_ml") if side == "away" else row.get("home_ml"))
+    return team, None, None if odds is None else float(odds)
+
+
+def find_game(bet: dict) -> Game | None:
+    """Re-fetch the game a tracked bet is on (to grade it)."""
+    gid = bet["game_id"]
+    if bet["league"].lower() == "nba":
+        from zoneinfo import ZoneInfo
+        start = dt.datetime.fromisoformat(bet["start"].replace("Z", "+00:00")).astimezone(ZoneInfo("America/New_York"))
+        days = [start.date(), start.date() - dt.timedelta(days=1), start.date() + dt.timedelta(days=1)]
+        for d in days:
+            for g in fetch_nba(d):
+                if g.game_id == gid:
+                    return g
+        return None
+    for st_ in ("reg", "post"):
+        for g in fetch_nfl(bet.get("season"), bet.get("week"), st_):
+            if g.game_id == gid:
+                return g
+    return None
+
+
+def grade_bet(bet: dict, game: Game) -> dict:
+    """result W/L/P and units won for a tracked bet (units = stake)."""
+    g = grade_row(game, bet["market"], bet["side"], bet.get("line"), bet["odds"])
+    if g["result"] is None:
+        return {"result": None, "units_won": None}
+    return {"result": g["result"], "units_won": round(g["profit_1u"] * float(bet["units"]), 2)}
 
 
 # ---------------------------------------------------------------- history / backtest
