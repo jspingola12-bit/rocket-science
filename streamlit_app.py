@@ -164,6 +164,41 @@ def fmt_odds(o) -> str:
     return "" if o is None or pd.isna(o) else f"{o:+.0f}"
 
 
+def _pick_text(r) -> str:
+    if r.get("tier") in ("LIFTOFF", "ORBIT"):
+        odds = fmt_odds(r.get("odds"))
+        return f'{r["fade_pick"]} ({odds})' if odds else r["fade_pick"]
+    if r.get("tier") == "GROUNDED":
+        return r["fade_pick"]
+    return "No bet"
+
+
+def _splits_text(r) -> str:
+    if r.get("public_side") is None or pd.isna(r.get("public_bets_%")):
+        return "—"
+    return f'{r["public_side"]} {r["public_bets_%"]:.0f}% bets · {r["public_money_%"]:.0f}% money'
+
+
+def one_row_per_game(df: pd.DataFrame) -> pd.DataFrame:
+    """Collapse the spread and moneyline rows into one row per game."""
+    out = []
+    for gid, g in df.groupby("game_id", sort=False):
+        rows = {r["market"]: r for r in g.to_dict("records")}
+        sp, ml = rows.get("Spread", {}), rows.get("Moneyline", {})
+        base = sp or ml
+        out.append({
+            "Time (CT)": base["local_time"], "League": base["league"], "Game": base["matchup"],
+            "Spread tier": sp.get("tier_label", ""), "Spread": sp.get("line", ""),
+            "Spread pick": _pick_text(sp) if sp else "", "Spread splits": _splits_text(sp) if sp else "",
+            "ML tier": ml.get("tier_label", ""), "Moneyline": ml.get("line", ""),
+            "ML pick": _pick_text(ml) if ml else "", "ML splits": _splits_text(ml) if ml else "",
+            "Status": base["status"], "Score": base.get("score", ""),
+            "_play": any(r.get("tier") in ("LIFTOFF", "ORBIT") for r in (sp, ml)),
+            "_start": base["start"],
+        })
+    return pd.DataFrame(out).sort_values("_start").drop(columns=["_start"]) if out else pd.DataFrame()
+
+
 def play_card(r: dict):
     c = TIER_COLOR[r["tier"]]
     stake = rs.TIERS[r["tier"]]["units"]
@@ -263,14 +298,10 @@ with tab_board:
         m1.metric("Liftoff plays", int((live_ct.tier == "LIFTOFF").sum()))
         m2.metric("Orbit leans", int((live_ct.tier == "ORBIT").sum()))
         m3.metric("Games", int(df.game_id.nunique()))
-        view = df[df.tier.isin(["LIFTOFF", "ORBIT"])] if plays_only else df
-        st.dataframe(view[[c for c in COLS if c in view]], hide_index=True, width="stretch", height=600,
-                     column_config={"tier_label": "Tier", "fade_pick": "Fade pick", "line": "Line",
-                                    "public_side": "Most-bet side", "local_time": "Time (CT)",
-                                    "public_bets_%": st.column_config.NumberColumn("Bets %", format="%d%%"),
-                                    "public_money_%": st.column_config.NumberColumn("Money %", format="%d%%"),
-                                    "money_minus_bets": st.column_config.NumberColumn("Money − bets", format="%+d"),
-                                    "odds": st.column_config.NumberColumn("Odds", format="%+d")})
+        games_tbl = one_row_per_game(df)
+        if plays_only:
+            games_tbl = games_tbl[games_tbl["_play"]]
+        st.dataframe(games_tbl.drop(columns=["_play"]), hide_index=True, width="stretch", height=600)
         st.caption("🚀 Liftoff = bet 1u · 🛰️ Orbit = lean 0.5u · 🔭 Watch = 70% side but no edge · "
                    "⛔ Abort = public money agrees, don't fade · 🌍 Grounded = no side at 70%. "
                    "Splits move until game time, so check close to kickoff or tip.")
