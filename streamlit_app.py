@@ -28,8 +28,7 @@ st.markdown("""<style>
 </style>""", unsafe_allow_html=True)
 
 st.title("🚀 Rocket Science")
-st.caption("Fade the public on NFL & NBA spreads and moneylines when 70%+ of bets or money "
-           "is on one side, graded by whether the money backs the tickets up.")
+st.caption("Fading the public should not be rocket science! Created by James Spingola")
 
 COLS = ["tier_label", "league", "local_time", "matchup", "market", "line", "fade_pick", "odds",
         "public_side", "public_bets_%", "public_money_%", "money_minus_bets", "status", "score", "result"]
