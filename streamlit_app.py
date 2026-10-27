@@ -13,6 +13,7 @@ import rocket_science as rs
 CT = ZoneInfo("America/Chicago")
 APP_VERSION = 3  # bump to bust cached boards after a model change
 STORE_KEY = "rocket_science_bets_v1"
+SETTINGS_KEY = "rocket_science_settings_v1"
 TIER_COLOR = {"LIFTOFF": "#ff7a3d", "ORBIT": "#4da3ff"}
 
 st.set_page_config(page_title="Rocket Science", page_icon="🚀", layout="wide")
@@ -74,20 +75,45 @@ def final_game(league, game_id, start, season, week):
 def load_bets():
     if "bets" in st.session_state:
         return
-    raw = streamlit_js_eval(js_expressions=f"localStorage.getItem('{STORE_KEY}') || '[]'", key="ls_get")
+    raw = streamlit_js_eval(
+        js_expressions=(f"JSON.stringify({{bets: localStorage.getItem('{STORE_KEY}') || '[]', "
+                        f"settings: localStorage.getItem('{SETTINGS_KEY}') || '{{}}'}})"),
+        key="ls_get2")
     if raw is None:
         return  # browser hasn't answered yet; Streamlit reruns when it does
     try:
-        st.session_state.bets = json.loads(raw)
+        data = json.loads(raw)
+        st.session_state.bets = json.loads(data["bets"])
+        st.session_state.settings = json.loads(data["settings"])
     except Exception:
-        st.session_state.bets = []
+        st.session_state.bets, st.session_state.settings = [], {}
 
 
 def persist_bets():
     if "bets" in st.session_state and st.session_state.get("dirty"):
-        payload = json.dumps(st.session_state.bets)
-        streamlit_js_eval(js_expressions=f"localStorage.setItem('{STORE_KEY}', {json.dumps(payload)}); 'saved'",
+        bets = json.dumps(json.dumps(st.session_state.bets))
+        settings = json.dumps(json.dumps(st.session_state.settings))
+        streamlit_js_eval(js_expressions=(f"localStorage.setItem('{STORE_KEY}', {bets}); "
+                                          f"localStorage.setItem('{SETTINGS_KEY}', {settings}); 'saved'"),
                           key="ls_set")
+
+
+def unit_value() -> float:
+    """Dollars per unit (0 = not set)."""
+    return float(st.session_state.get("settings", {}).get("unit", 0) or 0)
+
+
+def money(units: float, uv: float | None = None) -> str:
+    uv = unit_value() if uv is None else uv
+    if not uv:
+        return ""
+    d = units * uv
+    return f"{'-' if d < 0 else ''}${abs(d):,.2f}".replace(".00", "")
+
+
+def bet_value(b: dict) -> float:
+    """Dollar value of one unit for a bet: the size when it was placed, else today's."""
+    return float(b.get("unit_value") or unit_value())
 
 
 def bets_ready() -> bool:
@@ -110,7 +136,7 @@ def add_bet(row: dict, market: str, side: str, units: float, source: str):
         "matchup": row["matchup"], "market": market, "side": side, "team": team,
         "line": line, "odds": float(odds), "units": float(units), "pick": rs.pick_label(team, market, line),
         "source": source, "added": dt.datetime.now(CT).isoformat(timespec="minutes"),
-        "result": None, "units_won": None,
+        "result": None, "units_won": None, "unit_value": unit_value() or None,
     })
     st.session_state.dirty = True
     st.toast(f"Tracking {rs.pick_label(team, market, line)} for {units:g}u")
@@ -143,7 +169,7 @@ def play_card(r: dict):
     stake = rs.TIERS[r["tier"]]["units"]
     action = "Bet" if r["tier"] == "LIFTOFF" else "Lean"
     st.markdown(f"""<div class="rs-card" style="--c:{c}">
-<div class="rs-tier">{html.escape(r["tier_label"])} · {action} {stake:g}u · {r["league"]} {r["market"]}</div>
+<div class="rs-tier">{html.escape(r["tier_label"])} · {action} {stake:g}u{(" (" + money(stake) + ")") if unit_value() else ""} · {r["league"]} {r["market"]}</div>
 <div class="rs-pick">{html.escape(r["fade_pick"])}<span class="rs-odds">{fmt_odds(r["odds"])}</span></div>
 <div class="rs-meta">{html.escape(r["matchup"])} · {r["local_time"]} CT<br>
 Fading {html.escape(str(r["public_side"]))}: {r["public_bets_%"]:.0f}% of bets, {r["public_money_%"]:.0f}% of money</div>
@@ -157,6 +183,8 @@ Fading {html.escape(str(r["public_side"]))}: {r["public_bets_%"]:.0f}% of bets, 
     else:
         with st.popover("➕ Track this bet"):
             u = st.number_input("Units", 0.5, 20.0, float(stake), 0.5, key=f"u_{bid}")
+            if unit_value():
+                st.caption(f"= {money(u)} at your {money(1)} unit")
             if st.button("Add to My bets", key=f"a_{bid}", type="primary"):
                 add_bet(r, mkt, r["pick_side"], u, r["tier_label"])
                 st.rerun()
@@ -223,6 +251,8 @@ with tab_board:
                 else:
                     side = opts[st.radio("Side", list(opts), horizontal=True, key="any_side")]
                     u = st.number_input("Units", 0.5, 20.0, 1.0, 0.5, key="any_units")
+                    if unit_value():
+                        st.caption(f"= {money(u)} at your {money(1)} unit")
                     if st.button("Add to My bets", type="primary", key="any_add"):
                         add_bet(pick, mkt, side, u, "My pick")
                         st.rerun()
@@ -249,6 +279,42 @@ with tab_bets:
     if not bets_ready():
         st.info("Loading your saved bets…")
     else:
+        with st.expander(f"💵 Unit size: {money(1) + ' per unit' if unit_value() else 'not set'}",
+                         expanded=not unit_value()):
+            new_uv = st.number_input("How many dollars is 1 unit for you?", 0.0, 100000.0, unit_value(), 5.0,
+                                     format="%.2f", key="uv_input")
+            if st.button("Save unit size", type="primary"):
+                st.session_state.settings["unit"] = new_uv
+                st.session_state.dirty = True
+                st.toast(f"Unit size saved: {money(1, new_uv) or 'not set'}")
+                st.rerun()
+            st.caption("Bets you've already tracked keep the unit size you had when you placed them.")
+
+            st.markdown("**🧮 Not sure? Get a recommendation**")
+            bankroll = st.number_input("Betting bankroll ($): money set aside only for betting",
+                                       0.0, 10_000_000.0, 0.0, 50.0, format="%.0f", key="br")
+            style = st.radio("Style", ["Conservative (1%)", "Standard (2%)", "Aggressive (3%)"],
+                             index=1, horizontal=True, key="br_style")
+            take_home = st.number_input("Optional: monthly take-home pay ($)", 0.0, 10_000_000.0, 0.0, 100.0,
+                                        format="%.0f", key="br_pay")
+            pct = {"Conservative (1%)": .01, "Standard (2%)": .02, "Aggressive (3%)": .03}[style]
+            if bankroll > 0:
+                rec = max(1.0, round(bankroll * pct))
+                st.success(f"Recommended unit: **${rec:,.0f}** ({pct:.0%} of a ${bankroll:,.0f} bankroll). "
+                           f"A Liftoff (1u) would be ${rec:,.0f} and an Orbit (0.5u) {money(0.5, rec)}.")
+                if take_home > 0 and bankroll > 0.10 * take_home:
+                    st.warning(f"That bankroll is {bankroll / take_home:.0%} of a month's take-home pay. "
+                               f"A common rule of thumb is to keep it to money you could lose entirely "
+                               f"without touching bills or savings. Around ${0.10 * take_home:,.0f} or less "
+                               f"(10% of a month's pay) would be a safer ceiling.")
+                if st.button(f"Use ${rec:,.0f} as my unit"):
+                    st.session_state.settings["unit"] = float(rec)
+                    st.session_state.dirty = True
+                    st.toast(f"Unit size saved: ${rec:,.0f}")
+                    st.rerun()
+            st.caption("Most bettors risk 1–3% of their bankroll per unit so a losing streak can't wipe them out. "
+                       "Never bet money you need. Need help? Call or text 1-800-GAMBLER.")
+
         grade_pending()
         bets = st.session_state.bets
         done = [b for b in bets if b["result"] is not None]
@@ -258,8 +324,12 @@ with tab_bets:
         w = sum(b["result"] == "W" for b in done)
         l = sum(b["result"] == "L" for b in done)
         p = sum(b["result"] == "P" for b in done)
+        dollars = sum(b["units_won"] * bet_value(b) for b in done)
         color = "#2ecc71" if total > 0 else "#ff5c5c" if total < 0 else "inherit"
-        st.markdown(f"""<div class="rs-total" style="color:{color}">{total:+.2f}u</div>
+        dollar_txt = ""
+        if any(bet_value(b) for b in bets) or unit_value():
+            dollar_txt = f'<span style="font-size:1.6rem;margin-left:.6rem">{"+" if dollars >= 0 else "-"}${abs(dollars):,.2f}</span>'
+        st.markdown(f"""<div class="rs-total" style="color:{color}">{total:+.2f}u{dollar_txt}</div>
 <div class="rs-sub">Record {w}-{l}-{p} · ROI {(100 * total / risked if risked else 0):+.1f}% · {len(pending)} pending</div>""",
                     unsafe_allow_html=True)
 
@@ -275,7 +345,8 @@ with tab_bets:
             st.caption("No open bets. Tap ➕ Track this bet on any play, or use ➕ Track any other bet.")
         for b in sorted(pending, key=lambda x: x["start"]):
             a, z = st.columns([5, 1])
-            a.markdown(f'**{b["pick"]}** ({fmt_odds(b["odds"])}) · {b["units"]:g}u  \n'
+            stake_d = money(b["units"], bet_value(b))
+            a.markdown(f'**{b["pick"]}** ({fmt_odds(b["odds"])}) · {b["units"]:g}u{" (" + stake_d + ")" if stake_d else ""}  \n'
                        f'<span class="rs-sub">{b["league"]} · {b["matchup"]} · {local_time(b["start"])} CT · {b["source"]}</span>',
                        unsafe_allow_html=True)
             if z.button("🗑️", key=f"del_{b['id']}", help="Remove this bet"):
@@ -288,7 +359,8 @@ with tab_bets:
             show = pd.DataFrame(done).sort_values("start", ascending=False)
             show["When"] = [local_time(s) for s in show["start"]]
             show["Odds"] = [fmt_odds(o) for o in show["odds"]]
-            st.dataframe(show[["When", "league", "matchup", "pick", "Odds", "units", "result", "units_won", "source"]]
+            show["$"] = [money(b["units_won"], bet_value(b)) for b in show.to_dict("records")]
+            st.dataframe(show[["When", "league", "matchup", "pick", "Odds", "units", "result", "units_won", "$", "source"]]
                          .rename(columns={"league": "League", "matchup": "Game", "pick": "Bet", "units": "Stake",
                                           "result": "Result", "units_won": "Units", "source": "Type"}),
                          hide_index=True, width="stretch")
